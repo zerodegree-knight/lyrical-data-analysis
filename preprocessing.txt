@@ -1,0 +1,42 @@
+# web scraping of the review data
+library(rvest)
+library(janeaustenr)
+library(stringr)
+library(tidytext)
+library(quanteda)
+library(XML)
+library(dplyr)
+flip_page <- read_html("https://www.flipkart.com/lois-caron-lcs-8404-original-gold-plated-day-date-functioning-analog-watch-men/product-reviews/itmfcgfahfdmzcph?pid=WATFCGYYUFMFFQF5&lid=LSTWATFCGYYUFMFFQF5M6MOGP&marketplace=FLIPKART&page=1")
+flip_rev <- flip_page %>%
+  html_nodes("div._2t8wE0") %>%
+  html_text()
+
+#data conditioning
+fix.contraction <- function(doc) {
+  doc <- gsub("won't","will not",doc)
+  doc <-gsub("can't","can not",doc)
+  doc <- gsub("n't","not",doc)
+  doc <- gsub("'ll","will",doc)
+  doc <- gsub("'re","are",doc)
+  doc <- gsub("'ve","have",doc)
+  doc <- gsub("'m","am",doc)
+  doc <- gsub("'d","would",doc)
+  doc <- gsub("'s","",doc)
+  doc <- gsub("[[:punct:]]","",doc)
+  doc <- gsub("[^\x01-\x7F]","",doc)
+  return(doc)
+}
+
+rev.text <- sapply(flip_rev,fix.contraction)
+flip_toks <- tokens(rev.text)
+#lowercasing and stemming
+flip_toks <- tokens_tolower(flip_toks)
+flip_toks <- tokens_wordstem(flip_toks)
+#removing stopwords
+ flip_toks <- tokens_remove(flip_toks,stopwords("english"))
+ #formation of document term matrix
+ dtm <- dfm(flip_toks)
+ #filtering and weighting
+ doc_freq <- docfreq(dtm)
+ dtm <- dtm[, doc_freq >= 2]
+ dtm <- dfm_tfidf(dtm,force = TRUE)
