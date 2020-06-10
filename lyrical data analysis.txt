@@ -1,0 +1,208 @@
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(tidytext)
+library(wordcloud2)
+library(reshape2)
+library(knitr)
+library(kableExtra)
+library(SnowballC)
+library(tm)
+library(viridis)
+library(hrbrthemes)
+library(packcircles)
+library(ggpubr)
+#selecting on the basis of requirements
+prince <- prince_song %>% select (lyrics = text, song,year,album,Rank = peak,US.Pop,US.R.B)
+prince <- prince %>% mutate_if(is.factor,as.character)
+# converting it to lower cases
+prince$lyrics <- sapply(prince$lyrics,tolower)
+# function to expand contractions in an English-language source
+fix.contractions <- function(doc) {
+# "won't" is a special case as it does not expand to "wo not"
+doc <- gsub("won't", "will not", doc)
+doc <- gsub("can't", "can not", doc)
+doc <- gsub("n't", " not", doc)
+doc <- gsub("'ll", " will", doc)
+doc <- gsub("'re", " are", doc)
+doc <- gsub("'ve", " have", doc)
+doc <- gsub("'m", " am", doc)
+doc <- gsub("'d", " would", doc)
+doc  <- gsub("[[:digit:]]","",doc)
+doc <- gsub("[[:punct:]]","",doc)
+# 's could be 'is' or could be possessive: it has no expansion
+doc <- gsub("'s", "", doc)
+return(doc)
+}
+# fix (expand) contractions
+prince$lyrics <- sapply(prince$lyrics, fix.contractions)
+#some simple mutations
+prince <- prince %>%
+mutate(decade = ifelse(prince$year %in% 1978:1979,"1970s",
+ifelse(prince$year %in% 1980:1989,"1980s",
+ifelse(prince$year %in% 1990:1999,"1990s",
+ifelse(prince$year %in% 2000:2009,"2000s",
+ifelse(prince$year %in% 2010:2015,"2010s","NA"))))))
+prince <- prince %>%
+mutate(charted =
+ifelse(prince$rank %in% 1:100,"Charted","Uncharted"))
+# grouping the data into top 10 and top 100
+prince <- prince %>%
+mutate(group = ifelse(Rank %in% 1:10,"Top10",
+ifelse(Rank %in% 11:100,"Top100","Unranked")))
+# some visualization
+prince %>%
+filter(decade != "NA") %>%
+group_by(decade,charted) %>%
+summarise(number_of_songs = n()) %>%
+ggplot() +
+geom_bar(aes(x = decade,y = number_of_songs,fill = charted),stat = 'identity') +
+labs(x = "Decade", y = "song count") +
+ggtitle("Comparison") +
+theme_dark()
+#grouped barchart of three variable
+prince %>%
+filter(decade != "NA") %>%
+group_by(decade,group) %>%
+summarise(number_of_songs = n()) %>%
+ggplot() +
+geom_bar(aes(x = decade,y = number_of_songs, fill = group), stat = "identity",position = "dodge") + labs(x = "decade", y = "song count") +
+theme_bw() +
+ggtitle("comparison of Top10, Top100, & Unranked")
+#generating a nice table of top songs by prince
+prince %>%
+filter(Rank == "1") %>%
+select(year,song,Rank) %>%
+mutate_if(is.numeric,function(x) {cell_spec(x, bold = T,
+color = spec_color(x,end = 1, option = "D",na_color = "#BBBBBB"),
+font_size = spec_font_size(x))}) %>%
+mutate(song = cell_spec(song,color = "white",bold = T,
+background = spec_color(1:13,end = 1,option ="B",direction = -1))) %>%
+kable(escape = F, align = "c") %>%
+kable_styling(c("striped","condensed"),full_width = F)
+#list of unwanted word
+unwanted_word <- c("hey","yeah","ye","ow","oh","cuz","doo","wanna","xs",
+"dunno","huh","ah","ahh","yea",
+"mend","prince", "chorus", "repeat", "lyrics",
+"theres", "bridge", "fe0f", "yeah", "baby",
+"alright", "wanna", "gonna", "chorus", "verse",
+"whoa", "gotta", "make", "miscellaneous", "ooh",
+"uurh", "pheromone", "poompoom",
+"matic", " ai ", " ca ", " la ", "hey", " na ",
+" da ", " uh ", " tin ", "  ll", "transcription",
+"repeats","az","woah","ahhh","hmmm")
+#removing undesirable words,stop words and making tokens
+prince_filt <- prince %>%
+unnest_tokens(word,lyrics) %>%
+anti_join(stop_words) %>%
+distinct() %>%
+filter(!word %in% unwanted_word) %>%
+filter(nchar(word) > 3)
+#making a table of word frequency for top song
+data <- prince %>%
+unnest_tokens(word, lyrics) %>%
+group_by(song,group) %>%
+summarise(num_words = n()) %>%
+arrange(desc(num_words))
+data[1:10,] %>%
+ungroup(num_words, song) %>%
+mutate(num_words = color_bar("lightgrey",proportion) %>%
+mutate(song = color_tile("lightgreen","lightgreen")(song)) %>%
+kable("html", escape = FALSE, align = "c", caption = "Songs With Highest Word Count") %>%
+kable_styling(bootstrap_options =
+c("striped", "condensed", "bordered"),
+full_width = FALSE)
+#visualisation
+data %>%
+ggplot() +
+geom_histogram(aes(x = num_words,fill = group),binwidth = 10) +
+ylab("Song Count") +
+xlab("word count per song") +
+ggtitle("word count distribution") +
+theme_dark()
+# making a round visualisation
+data <- prince_filt %>%
+count(word,sort = TRUE) %>%
+top_n(20)
+# generating the data for layout
+packing <- circleProgressiveLayout(data$n,sizetype = 'area')
+data <- cbind(data,packing)
+data.g <- circleLayoutVertices(packing,npoints = 50)
+# plotting with customization
+ggplot() +
+geom_polygon(data = data.g, aes(x,y,group = id, fill = as.factor(id)),colour = "black",alpha = 0.6) +
+geom_text(data = data,aes(x,y,size = n,label = word)) +
+scale_size_continuous(range = c(1,4)) +
+theme_void() +
+theme(legend.position = "none") +
+coord_equal()
+#creating a word cloud
+prince_word <- prince_filt %>%
+count(word,sort = TRUE)
+wordcloud2(prince_word[1:100,],size = 0.5,color = rep_len(c("violet","blue"),100),backgroundColor ="black" )
+#visualisation
+data_1<- prince_filt %>%
+select(group,word) %>%
+count(word,group) %>%
+filter(group == "Top10") %>%
+arrange(desc(n),word) %>%
+head(10)
+data_2<- prince_filt %>%
+select(group,word) %>%
+count(word,group) %>%
+filter(group == "Top100") %>%
+arrange(desc(n),word) %>%
+head(10)
+data_3<- prince_filt %>%
+select(group,word) %>%
+count(word,group) %>%
+filter(group == "Unranked") %>%
+arrange(desc(n),word) %>%
+head(10)
+data <- rbind(data_1,data_2,data_3)
+#above three figures arranged in 3 rows and 1 column
+vis_1 <- data_1 %>%
+ggplot(aes(word,n)) +
+geom_col() +
+xlab("word") +
+ylab("word count") +
+ggtitle("words in Top10") +
+coord_flip() +
+theme_bw()
+vis_2 <- data_2 %>%
+ggplot(aes(word,n)) +
+geom_col() +
+xlab("word") +
+ylab("word count") +
+ggtitle("words in Top100") +
+coord_flip() +
+theme_bw()
+vis_3 <-  data_3 %>%
+ggplot(aes(word,n)) +
+geom_col() +
+xlab("word") +
+ylab("word count") +
+ggtitle("words in unranked") +
+coord_flip() +
+theme_bw()
+figure <- ggarrange(vis_1,vis_2,vis_3,
+labels = c("Top10","Top100","unranked"),
+ncol = 1,nrow = 3)
+#word length distribution
+word_len <- prince %>%
+   unnest_tokens(word,lyrics) %>%
+   group_by(song,decade) %>%
+   distinct() %>%
+   filter(!word %in% unwanted_word) %>%
+   mutate(word_length = nchar(word)) 
+   
+ word_len %>%
+   count(word_length,sort = TRUE) %>%
+   ggplot(aes(word_length), binwidth = 10) +
+   geom_histogram(aes(fill = ..count..),
+                    breaks = seq(1,25, by = 2),
+                   show.legend = FALSE) +
+   xlab("word length") +
+   ylab("word count") +
+   ggtitle("word length distribution") +
+theme_bw()
